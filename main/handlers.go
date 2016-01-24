@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"github.com/gorilla/mux"
+	"github.com/dgrijalva/jwt-go"
+	"time"
 )
 
 func NewUser(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +39,10 @@ func NewUser(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "new user created")
 }
 
+type TokenJSON struct {
+	Jwt string `json:"jwt"`
+}
+
 func Login(w http.ResponseWriter, r *http.Request) {
 	var userJSON User
 	decoder := json.NewDecoder(r.Body)
@@ -51,6 +57,34 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	if username == "" || password == "" {
 		w.WriteHeader(http.StatusBadRequest)
 	}
+	var dbuser DBUser
+	userSQL := `SELECT * from users WHERE username=$1`
+	_ = db.Get(&dbuser, userSQL, username)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	err = bcrypt.CompareHashAndPassword([]byte(dbuser.HashedPassword), []byte(password))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	token := jwt.New(jwt.SigningMethodHS256)
+	token.Claims["username"] = dbuser.Username
+	exp := time.Now().Add(time.Hour * 2).Unix()
+	fmt.Println(exp)
+	token.Claims["exp"] = exp
+	tokenString, err := token.SignedString([]byte("secret"))
+
+	encoder := json.NewEncoder(w)
+	var tokenJSON TokenJSON
+	tokenJSON.Jwt = tokenString
+	err = encoder.Encode(&tokenJSON)
+	if err != nil {
+		fmt.Println(err)
+	}
+	w.Header().Set("Content-Type", "application/json")
 }
 
 func NewMessage(w http.ResponseWriter, r *http.Request) {
@@ -98,4 +132,5 @@ func GetUsersMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	encoder := json.NewEncoder(w)
 	encoder.Encode(&messages)
+	w.Header().Set("Content-Type", "application/json")
 }

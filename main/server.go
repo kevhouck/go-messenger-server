@@ -8,6 +8,10 @@ import (
 	"fmt"
 	"log"
 	"github.com/codegangsta/negroni"
+	"github.com/auth0/go-jwt-middleware"
+	"github.com/dgrijalva/jwt-go"
+	"github.com/gorilla/context"
+	"time"
 )
 
 var schema = `
@@ -37,22 +41,64 @@ func main() {
 	//db.MustExec(schema)
 
 	r := mux.NewRouter()
-	routes := mux.NewRouter()
-	r.PathPrefix("/").Handler(negroni.New(
+	authBase := mux.NewRouter()
+	apiBase := mux.NewRouter()
+	auth := authBase.PathPrefix("/auth").Subrouter()
+	api := apiBase.PathPrefix("/api").Subrouter()
+
+	r.PathPrefix("/auth").Handler(negroni.New(
 		negroni.NewRecovery(),
 		negroni.NewLogger(),
-		negroni.Wrap(routes),
+		negroni.Wrap(authBase),
+	))
+
+	// must be authenticated for use api routes
+	jwtMiddleware := jwtmiddleware.New(jwtmiddleware.Options{
+		ValidationKeyGetter: func(toekn *jwt.Token) (interface{}, error) {
+			return []byte("secret"), nil
+		},
+		SigningMethod: jwt.SigningMethodHS256,
+		UserProperty: "jwt_user",
+	})
+	r.PathPrefix("/api").Handler(negroni.New(
+		negroni.NewRecovery(),
+		negroni.NewLogger(),
+		negroni.HandlerFunc(jwtMiddleware.HandlerWithNext),
+		negroni.HandlerFunc(CheckForJWTExpiration),
+		negroni.Wrap(apiBase),
 	))
 
 	// used to check if server is live
-	routes.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+	auth.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "pong")
 	}).Methods("POST")
 
-	routes.HandleFunc("/signup", NewUser).Methods("POST")
-	routes.HandleFunc("/login", Login).Methods("POST")
-	routes.HandleFunc("/messages", NewMessage).Methods("POST")
-	routes.HandleFunc("/{user}/messages", GetUsersMessages).Methods("GET")
+	auth.Path("/signup").HandlerFunc(NewUser).Methods("POST")
+	auth.Path("/login").HandlerFunc(Login).Methods("POST")
+
+	api.Path("/messages").HandlerFunc(NewMessage).Methods("POST")
+	api.HandleFunc("/{user}/messages", GetUsersMessages).Methods("GET")
 	log.Fatal(http.ListenAndServe(":8080", r))
 
+}
+
+func CheckForJWTExpiration(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	token := context.Get(r, "jwt_user")
+	claims := token.(*jwt.Token).Claims
+	exp := claims["exp"]
+	// cast to float, for some reason this is the only type it will cast to
+	// even though the claim is actually added as an int64, very weird.
+	// the resolution of the time since epoch is maintained, however
+	expTimeFloat, ok := exp.(float64)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	expTime := time.Unix(int64(expTimeFloat), 0)
+	fmt.Println(expTime.Unix())
+	if time.Now().After(expTime) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	next(w, r)
 }
