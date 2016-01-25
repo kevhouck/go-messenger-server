@@ -10,25 +10,10 @@ import (
 	"github.com/codegangsta/negroni"
 	"github.com/auth0/go-jwt-middleware"
 	"github.com/dgrijalva/jwt-go"
-	"github.com/gorilla/context"
-	"time"
 )
 
-var schema = `
-CREATE TABLE users (
-	user_id serial primary key,
-	username text UNIQUE,
-	hashed_password text
-);
-
-CREATE TABLE messages (
-	messege_id serial primary key,
-	user_to serial references users(user_id),
-	user_from serial references users(user_id),
-	content text
-);`
-
 var db *sqlx.DB
+var jwtSecret string
 
 func main() {
 	var err error
@@ -36,9 +21,7 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-
-	// uncomment for setting up db tables
-	//db.MustExec(schema)
+	CreateSchema(false);
 
 	r := mux.NewRouter()
 	authBase := mux.NewRouter()
@@ -52,10 +35,11 @@ func main() {
 		negroni.Wrap(authBase),
 	))
 
-	// must be authenticated for use api routes
+	jwtSecret = "a very secret string"
+	// must be authenticated to  use api routes
 	jwtMiddleware := jwtmiddleware.New(jwtmiddleware.Options{
-		ValidationKeyGetter: func(toekn *jwt.Token) (interface{}, error) {
-			return []byte("secret"), nil
+		ValidationKeyGetter: func(token *jwt.Token) (interface{}, error) {
+			return []byte(jwtSecret), nil
 		},
 		SigningMethod: jwt.SigningMethodHS256,
 		UserProperty: "jwt_user",
@@ -72,11 +56,31 @@ func main() {
 		fmt.Fprint(w, "pong")
 	}).Methods("POST")
 
-	auth.Path("/signup").HandlerFunc(NewUser).Methods("POST")
+	auth.Path("/signup").HandlerFunc(Signup).Methods("POST")
 	auth.Path("/login").HandlerFunc(Login).Methods("POST")
 
 	api.Path("/messages").HandlerFunc(NewMessage).Methods("POST")
 	api.HandleFunc("/{user}/messages", GetUsersMessages).Methods("GET")
+
 	log.Fatal(http.ListenAndServe(":8080", r))
 
+}
+
+func CreateSchema(should bool) {
+	if should {
+		schema := `
+		CREATE TABLE users (
+			user_id serial primary key,
+			username text UNIQUE,
+			hashed_password text
+		);
+
+		CREATE TABLE messages (
+			messege_id serial primary key,
+			user_to serial references users(user_id),
+			user_from serial references users(user_id),
+			content text
+		);`
+		db.MustExec(schema)
+	}
 }

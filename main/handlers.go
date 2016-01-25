@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func NewUser(w http.ResponseWriter, r *http.Request) {
+func Signup(w http.ResponseWriter, r *http.Request) {
 	var userJSON User
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(&userJSON)
@@ -60,7 +60,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	}
 	var dbuser DBUser
 	userSQL := `SELECT * from users WHERE username=$1`
-	_ = db.Get(&dbuser, userSQL, username)
+	err = db.Get(&dbuser, userSQL, username)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -74,10 +74,10 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	token := jwt.New(jwt.SigningMethodHS256)
 	token.Claims["username"] = dbuser.Username
 	exp := time.Now().Add(time.Hour * 2).Unix()
-	fmt.Println(exp)
 	token.Claims["exp"] = exp
-	tokenString, err := token.SignedString([]byte("secret"))
+	tokenString, err := token.SignedString([]byte(jwtSecret))
 
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	encoder := json.NewEncoder(w)
 	var tokenJSON TokenJSON
 	tokenJSON.Jwt = tokenString
@@ -85,7 +85,6 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fmt.Println(err)
 	}
-	w.Header().Set("Content-Type", "application/json")
 }
 
 func NewMessage(w http.ResponseWriter, r *http.Request) {
@@ -107,14 +106,24 @@ func NewMessage(w http.ResponseWriter, r *http.Request) {
 
 	if requestUsername != username_from  {
 		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, "user not authorized to send this message as this user")
 		return
 	}
 
-	newMessageSQL := `INSERT INTO messages (user_to, user_from, content) VALUES
+	var userTo DBUser
+	userSQL := `SELECT * from users WHERE username=$1`
+	err = db.Get(&userTo, userSQL, username_to)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, "destination user does not exist")
+		return
+	}
+
+	newMessageSQL := `
+			INSERT INTO messages (user_to, user_from, content) VALUES
 			( (SELECT user_id from users WHERE username=$1) ,
 			  (SELECT user_id from users WHERE username=$2) ,
-			  $3
-			)`
+			  $3)`
 	_, err = db.Exec(newMessageSQL, username_to, username_from, content)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -133,6 +142,7 @@ func GetUsersMessages(w http.ResponseWriter, r *http.Request) {
 
 	if requestUsername != username  {
 		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, "user not authorized to see this user's messages")
 		return
 	}
 
@@ -140,9 +150,9 @@ func GetUsersMessages(w http.ResponseWriter, r *http.Request) {
 		SELECT users_to.username AS username_to, users_from.username AS username_from, messagesToUser.content from (
 			SELECT * from messages WHERE user_to =
 				( SELECT user_id from users WHERE username=$1 )
-			) AS messagesToUser
-		 JOIN users users_to ON messagesToUser.user_to=users_to.user_id
-		 JOIN users users_from ON messagesToUser.user_from=users_from.user_id`
+		) AS messagesToUser
+		JOIN users users_to ON messagesToUser.user_to=users_to.user_id
+		JOIN users users_from ON messagesToUser.user_from=users_from.user_id`
 
 	messages := []Message{}
 
@@ -151,7 +161,7 @@ func GetUsersMessages(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	encoder := json.NewEncoder(w)
 	encoder.Encode(&messages)
-	w.Header().Set("Content-Type", "application/json")
 }
