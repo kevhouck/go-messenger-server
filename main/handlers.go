@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"github.com/gorilla/mux"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/gorilla/context"
 	"time"
 )
 
@@ -95,9 +96,19 @@ func NewMessage(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
+	token := context.Get(r, "jwt_user")
+	claims := token.(*jwt.Token).Claims
+	requestUsername := claims["username"]
+
 	username_to := messageJSON.UsernameTo
 	username_from := messageJSON.UsernameFrom
 	content := messageJSON.Content
+
+	if requestUsername != username_from  {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 
 	newMessageSQL := `INSERT INTO messages (user_to, user_from, content) VALUES
 			( (SELECT user_id from users WHERE username=$1) ,
@@ -115,6 +126,16 @@ func NewMessage(w http.ResponseWriter, r *http.Request) {
 func GetUsersMessages(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	username := vars["user"]
+
+	token := context.Get(r, "jwt_user")
+	claims := token.(*jwt.Token).Claims
+	requestUsername := claims["username"]
+
+	if requestUsername != username  {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	userSQL := `
 		SELECT users_to.username AS username_to, users_from.username AS username_from, messagesToUser.content from (
 			SELECT * from messages WHERE user_to =

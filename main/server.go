@@ -64,7 +64,6 @@ func main() {
 		negroni.NewRecovery(),
 		negroni.NewLogger(),
 		negroni.HandlerFunc(jwtMiddleware.HandlerWithNext),
-		negroni.HandlerFunc(CheckForJWTExpiration),
 		negroni.Wrap(apiBase),
 	))
 
@@ -80,25 +79,4 @@ func main() {
 	api.HandleFunc("/{user}/messages", GetUsersMessages).Methods("GET")
 	log.Fatal(http.ListenAndServe(":8080", r))
 
-}
-
-func CheckForJWTExpiration(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	token := context.Get(r, "jwt_user")
-	claims := token.(*jwt.Token).Claims
-	exp := claims["exp"]
-	// cast to float, for some reason this is the only type it will cast to
-	// even though the claim is actually added as an int64, very weird.
-	// the resolution of the time since epoch is maintained, however
-	expTimeFloat, ok := exp.(float64)
-	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	expTime := time.Unix(int64(expTimeFloat), 0)
-	fmt.Println(expTime.Unix())
-	if time.Now().After(expTime) {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	next(w, r)
 }
